@@ -1,0 +1,51 @@
+'use client';
+import { useEffect, useState } from 'react';
+import { getEngine } from '@/lib/audio';
+import { BARS, STEPS } from '@/lib/config';
+import type { Beat } from '@/lib/types';
+import { PlayIcon, StopIcon } from './Icons';
+
+/** Which beat (by key) the shared engine is playing, so only one plays at a time. */
+let current: string | null = null;
+const subs = new Set<(k: string | null) => void>();
+function setCurrent(k: string | null) { current = k; subs.forEach((s) => s(k)); }
+
+export function usePlaying() {
+  const [k, setK] = useState<string | null>(current);
+  useEffect(() => { subs.add(setK); return () => { subs.delete(setK); }; }, []);
+  return k;
+}
+
+export async function playBeat(key: string, beat: Beat) {
+  const engine = getEngine();
+  if (current === key) { engine.stop(); setCurrent(null); return; }
+  setCurrent(key);
+  await engine.play(beat);
+}
+
+export function stopAll() { getEngine().stop(); setCurrent(null); }
+
+export function usePosition() {
+  const [pos, setPos] = useState<{ bar: number; step: number }>({ bar: -1, step: -1 });
+  useEffect(() => getEngine().onPosition((bar, step) => setPos({ bar, step })), []);
+  return pos;
+}
+
+/** A play button with a full-arrangement progress strip. */
+export function BeatPlayer({ id, beat, label, big }: { id: string; beat: Beat; label: string; big?: boolean }) {
+  const playing = usePlaying() === id;
+  const { bar, step } = usePosition();
+  const pct = playing && bar >= 0 ? ((bar * STEPS + step + 1) / (BARS * STEPS)) * 100 : 0;
+  useEffect(() => () => { if (current === id) stopAll(); }, [id]);
+  return (
+    <div className="row" style={{ gap: 12, flexWrap: 'nowrap' }}>
+      <button type="button" className={`btn ${playing ? 'btn-dark' : 'btn-primary'} btn-play`} style={big ? { height: 56, width: 84 } : undefined}
+        onClick={() => playBeat(id, beat)} aria-label={`${playing ? 'Stop' : 'Play'} ${label}`} aria-pressed={playing}>
+        {playing ? <StopIcon /> : <PlayIcon />}
+      </button>
+      <div className="grow" aria-hidden="true" style={{ height: 8, borderRadius: 999, background: 'var(--line)', overflow: 'hidden' }}>
+        <div style={{ width: `${pct}%`, height: '100%', background: 'var(--ink)', transition: 'width .12s linear' }} />
+      </div>
+    </div>
+  );
+}
