@@ -1,22 +1,24 @@
 'use client';
 import { useEffect, useMemo, useState, type CSSProperties } from 'react';
 import { getEngine } from '@/lib/audio';
-import { cloneBeat } from '@/lib/beat';
-import { BARS, DRUM_ROWS, KITS, LANES, LOOP_BY_ID, STEPS, type DrumRow, type KitId, type LaneId, type LoopDef } from '@/lib/config';
+import { cloneBeat, drumStepCount, resizeDrums } from '@/lib/beat';
+import { BARS, DRUM_ROWS, KITS, LANES, LOOP_BY_ID, type DrumRow, type KitId, type LaneId, type LoopDef } from '@/lib/config';
 import type { Beat } from '@/lib/types';
+import { loopLabel } from '@/lib/loopLabels';
 import peaks from '@/lib/peaks.json';
+import generatedPeaks from '@/lib/generatedPeaks.json';
 import { playBeat, stopAll, usePlaying, usePosition } from './Playback';
 import { PlayIcon, StopIcon, XIcon } from './Icons';
 
 const LANE = Object.fromEntries(LANES.map((l) => [l.id, l])) as Record<LaneId, (typeof LANES)[number]>;
-const PEAKS = peaks as Record<string, number[]>;
+const PEAKS = { ...peaks, ...generatedPeaks } as Record<string, number[]>;
 
 interface Props {
   playKey: string;
   beat: Beat;
   onChange: (next: Beat) => void;
   loops: LoopDef[];
-  /** false = read only (submitted, or out of edits). */
+  /** false = read only after submission. */
   canEdit: boolean;
   /** Shown above the loop cards, e.g. a Submit button or edits counter. */
   actions?: React.ReactNode;
@@ -26,6 +28,8 @@ interface Props {
 
 export function Studio({ playKey, beat, onChange, loops, canEdit, actions, loopsTitle = 'Your loops', loopsHint }: Props) {
   const engine = getEngine();
+  const count = drumStepCount(beat);
+  const [inspected, setInspected] = useState('');
   const playing = usePlaying() === playKey;
   const { bar: liveBar, step: liveStep } = usePosition();
   const [selected, setSelected] = useState<string | null>(null);
@@ -60,8 +64,8 @@ export function Studio({ playKey, beat, onChange, loops, canEdit, actions, loops
     edit((b) => { b.kit = kit; });
     if (canEdit) { await engine.unlock(); engine.hit(kit, 'kick'); }
   };
-  const loadGroove = () => edit((b) => { const g = KITS.find((k) => k.id === b.kit)!.groove; for (const r of DRUM_ROWS) b.steps[r.id] = [...g[r.id]]; });
-  const clearDrums = () => edit((b) => { for (const r of DRUM_ROWS) b.steps[r.id] = Array(STEPS).fill(0); });
+  const loadGroove = () => edit((b) => { const g = KITS.find((k) => k.id === b.kit)!.groove; for (const r of DRUM_ROWS) b.steps[r.id] = Array.from({ length: count }, (_, i) => count === 8 ? g[r.id][i] : i % 2 === 0 ? g[r.id][i / 2] : 0); });
+  const clearDrums = () => edit((b) => { for (const r of DRUM_ROWS) b.steps[r.id] = Array(count).fill(0); });
 
   const preview = async (id: string) => {
     setSelected((s) => (s === id ? null : id));
@@ -98,7 +102,7 @@ export function Studio({ playKey, beat, onChange, loops, canEdit, actions, loops
                 onClick={() => preview(l.id)} aria-pressed={selected === l.id}
                 style={{ color: lane.color, borderColor: selected === l.id ? lane.color : undefined }}>
                 <span className="top">
-                  <span className="name"><span className="dot" style={{ background: lane.color }} />{l.name}</span>
+                  <span className="name"><span className="loop-code">{loopLabel(l)}</span>{l.name}</span>
                   <span className="meta">{lane.label.toUpperCase()}{l.bank === 'shared' ? ' · SHARED' : ''}</span>
                 </span>
                 <span className="wave" style={{ background: lane.tint }} aria-hidden="true">
@@ -115,6 +119,8 @@ export function Studio({ playKey, beat, onChange, loops, canEdit, actions, loops
           <h2>Arrangement · {BARS} bars</h2>
           <span className="hint" aria-live="polite">{hint}</span>
         </div>
+        <div className="row loop-legend">{loops.filter(l => l.lane === 'sample').map(l => <span key={l.id} className="chip"><strong>{loopLabel(l)}</strong> {l.name}</span>)}</div>
+        <p className="hint" aria-live="polite">{inspected || 'Tap a placed block to see its full sound name. Codes match the loop cards above.'}</p>
         <div className="scroll-x" style={{ '--arrangement-bars': BARS } as CSSProperties}>
           <div className="grid-row" aria-hidden="true">
             <div />
@@ -134,7 +140,9 @@ export function Studio({ playKey, beat, onChange, loops, canEdit, actions, loops
                     onDrop={(e) => { e.preventDefault(); const dropped = e.dataTransfer.getData('text/plain') || dragId; if (dropped) place(lane.id, b, dropped); setDragId(null); }}>
                     {def ? (
                       <div className="block" data-live={live} style={{ background: lane.tint, borderColor: lane.color }}>
-                        <span className="label">{def.name}</span>
+                        <button type="button" className="block-inspect" title={def.name}
+                          aria-label={`${def.name}, ${lane.label} bar ${b + 1}`}
+                          onClick={() => setInspected(`${loopLabel(def)} · ${def.name} · ${lane.label} bar ${b + 1}`)}>{loopLabel(def)}</button>
                         {canEdit && (
                           <button type="button" className="x" onClick={() => remove(lane.id, b)} aria-label={`Remove ${def.name} from ${lane.label} bar ${b + 1}`}><XIcon /></button>
                         )}
@@ -179,10 +187,11 @@ export function Studio({ playKey, beat, onChange, loops, canEdit, actions, loops
           </div>
         </div>
         <div className="vdivider" aria-hidden="true" />
-        <div className="seq scroll-x">
+        <div className="seq" style={{ '--drum-steps': count, '--drum-gap': count === 16 ? '4px' : '8px' } as CSSProperties}>
           <div className="panel-head" style={{ marginBottom: 8 }}>
-            <h2>Drum sequencer · {STEPS} steps</h2>
-            <span className="hint">Plays in every bar where Drums is on.</span>
+            <h2>Drum sequencer · {count} steps</h2>
+            <div className="row" role="group" aria-label="Drum resolution">{([8, 16] as const).map(n => <button key={n} type="button" className={`btn btn-sm ${count === n ? 'btn-dark' : 'btn-ghost'}`} aria-pressed={count === n} disabled={!canEdit} onClick={() => onChange(resizeDrums(beat, n))}>{n} steps</button>)}</div>
+            <span className="hint">One pattern per bar. 16 adds finer subdivisions; switching to 8 removes the in-between hits.</span>
           </div>
           {DRUM_ROWS.map((r) => (
             <div key={r.id} className="seq-row" role="group" aria-label={r.label}>

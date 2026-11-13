@@ -2,18 +2,21 @@
 import { useEffect, useState } from 'react';
 import { useSyncedBeat } from '@/lib/useSyncedBeat';
 import { useRouter } from 'next/navigation';
-import { BANKS, BATTLE_NAME, BPM, KEY_LABEL, PHASE_LABELS, SAMPLE_FILE_LABEL, SHARED_LOOPS, SLOT_BY_ID, type SlotId } from '@/lib/config';
+import { BATTLE_NAME, BPM, KEY_LABEL, PHASE_LABELS, SLOT_BY_ID, type SlotId } from '@/lib/config';
 import { normalizeBeat, sampleBars, canSubmit as beatReady } from '@/lib/beat';
 import { joinedSlots, playerName } from '@/lib/game';
-import { loadSession, clearSession, type Session } from '@/lib/session';
+import { loadSession, saveSession, clearSession, type Session } from '@/lib/session';
+import { playerBank, randomBank } from '@/lib/packs';
 import { useNow, useRoom } from '@/lib/store';
 import type { RoomState } from '@/lib/types';
 import type { RoomStore } from '@/lib/store';
 import { Chassis, PhasePills, formatClock } from '@/components/Chassis';
 import { Studio } from '@/components/Studio';
-import { Lobby, TasteDrop, Vote, Reveal, FlipBack, TeamUp, Done } from '@/components/Screens';
+import { Lobby, TasteDrop, Vote, Reveal, FlipBack, TeamUp, Done, SubmissionFeedback } from '@/components/Screens';
 import { MIN_SAMPLE_BARS } from '@/lib/config';
+import { battleSample } from '@/lib/battle';
 import { CheckIcon } from '@/components/Icons';
+import { RoomChat } from '@/components/RoomChat';
 
 export default function PlayPage() {
   const router = useRouter();
@@ -24,6 +27,7 @@ export default function PlayPage() {
   useEffect(() => {
     const s = loadSession();
     if (!s || s.role !== 'player' || !s.slot) { router.replace('/'); return; }
+    if (!s.bank) { s.bank = randomBank(); saveSession(s); }
     setSession(s);
   }, [router]);
 
@@ -31,17 +35,17 @@ export default function PlayPage() {
   useEffect(() => {
     if (!room || !store || !session?.slot) return;
     const me = room.players[session.slot];
-    if (!me) store.update({ [`players.${session.slot}`]: { name: session.name, joinedAt: Date.now() } });
+    if (!me) store.update({ [`players.${session.slot}`]: { name: session.name, joinedAt: Date.now(), bank: room.battle?.packs[session.slot] || session.bank } });
     else if (me.name !== session.name && !me.bot) store.update({ [`players.${session.slot}.name`]: session.name });
   }, [room, store, session]);
 
-  if (!session?.slot || !room || !store) {
+  if (!session?.slot || !room || !store || !room.players[session.slot]) {
     return <main className="page"><div className="chassis"><div className="panel big-center"><p>Connecting to the room…</p></div></div></main>;
   }
 
   const slot = session.slot;
   const seat = SLOT_BY_ID[slot];
-  const bank = BANKS[seat.bank];
+  const bank = playerBank(room.players[slot], slot, room);
   const left = room.phaseEndsAt ? room.phaseEndsAt - now : null;
 
   return (
@@ -72,10 +76,12 @@ export default function PlayPage() {
         </div>
         <div className="screen-title">{PHASE_LABELS[room.phase]}</div>
         <PhasePills phase={room.phase} />
-        <div className="screen-label">SAMPLE: {SAMPLE_FILE_LABEL}</div>
+        <div className="screen-label">SAMPLE: {battleSample(room).label}</div>
       </>}
     >
       <PhaseView room={room} store={store} slot={slot} />
+      <SubmissionFeedback room={room} slot={slot} />
+      <RoomChat key={room.battle?.id || 'legacy'} room={room} store={store} author={slot} />
     </Chassis>
   );
 }
@@ -95,8 +101,8 @@ function PhaseView({ room, store, slot }: { room: RoomState; store: RoomStore; s
 
 function MyStudio({ room, store, slot }: { room: RoomState; store: RoomStore; slot: SlotId }) {
   const me = room.players[slot];
-  const bank = BANKS[SLOT_BY_ID[slot].bank];
-  const [beat, setBeat, , cancelSave] = useSyncedBeat(normalizeBeat(me?.beat), (b) => store.update({ [`players.${slot}.beat`]: b }));
+  const bank = playerBank(me, slot, room);
+  const [beat, setBeat, , cancelSave] = useSyncedBeat(normalizeBeat(me?.beat), (b) => store.update({ [`players.${slot}.beat`]: b }, room.battle?.id));
   const submitted = !!me?.submitted;
   const ready = beatReady(beat);
 
@@ -117,7 +123,7 @@ function MyStudio({ room, store, slot }: { room: RoomState; store: RoomStore; sl
 
   return (
     <Studio playKey={`studio-${slot}`} beat={beat} onChange={setBeat} canEdit={!submitted} actions={actions}
-      loops={[...SHARED_LOOPS, ...bank.loops]} loopsTitle="Loops"
+      loops={[...battleSample(room).loops, ...bank.loops]} loopsTitle="Loops"
       loopsHint={`Shared sample + your ${bank.label.toLowerCase()}`} />
   );
 }

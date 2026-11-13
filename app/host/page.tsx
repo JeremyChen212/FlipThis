@@ -1,22 +1,25 @@
 'use client';
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { BATTLE_NAME, BPM, FLIP_EDIT_LIMIT, KEY_LABEL, PHASES, PHASE_LABELS, PHASE_MINUTES, SLOTS, type Phase, type SlotId } from '@/lib/config';
+import { BATTLE_NAME, BPM, KEY_LABEL, PHASES, PHASE_LABELS, PHASE_MINUTES, SLOTS, type Phase, type SlotId } from '@/lib/config';
 import { sampleBars, normalizeBeat } from '@/lib/beat';
-import { bestPairing, botFlip, botPlayer, botVotes, joinedSlots, matchupsFor, pairingOptions, pairsToMap, playerName, standings, tagOverlap } from '@/lib/game';
+import { automaticPairs, botComments, botFlip, botPlayer, botVotes, joinedSlots, playerName, standings, tagOverlap } from '@/lib/game';
+import { createVoting, eligibleSlots, votingBeat } from '@/lib/voting';
 import { clearSession, loadSession } from '@/lib/session';
 import { hasFirebase, useNow, useRoom, type Patch } from '@/lib/store';
 import type { RoomState } from '@/lib/types';
 import { Chassis, PhasePills, formatClock } from '@/components/Chassis';
+import { battleSample } from '@/lib/battle';
 import { BeatPlayer } from '@/components/Playback';
+import { RoomChat } from '@/components/RoomChat';
 
 const PHASE_HELP: Record<Phase, string> = {
-  lobby: 'Players join with their seat codes. Fill empty seats with demo players if fewer than 4 show up.',
+  lobby: 'Up to 20 players join with their seat codes. Demo room size is adjustable below.',
   taste: 'Everyone drops one song and 2 vibe tags. These tags pick the Flip Back pairs.',
-  studio: 'Everyone flips the shared vocal chop with their own sample bank and any drum kit.',
+  studio: 'Everyone flips the shared battle sample with their own sample bank and any drum kit.',
   vote: 'Blind A/B votes. Each player judges the matchups that don’t include their own beat.',
   reveal: 'Names and scores are revealed. Check the Flip Back pairs below before moving on.',
-  flipback: `Partners swap beats and get ${FLIP_EDIT_LIMIT} edits to add their own sounds.`,
+  flipback: 'Partners swap beats and remix freely with unlimited edits.',
   teamup: 'Partners hear both flips and privately answer: team up for the next battle?',
   done: 'Crews are shown. Point people to the feedback survey.',
 };
@@ -27,6 +30,7 @@ export default function HostPage() {
   const now = useNow();
   const [origin, setOrigin] = useState('');
   const [confirmReset, setConfirmReset] = useState(false);
+  const [demoSize, setDemoSize] = useState(4);
 
   useEffect(() => {
     const s = loadSession();
@@ -39,17 +43,29 @@ export default function HostPage() {
   const idx = PHASES.indexOf(room.phase);
   const left = room.phaseEndsAt ? room.phaseEndsAt - now : null;
   const joined = joinedSlots(room);
+  const voting = room.voting || createVoting(room);
   const bots = joined.filter((s) => room.players[s]?.bot);
 
   const goTo = (phase: Phase) => {
     const mins = PHASE_MINUTES[phase];
     const patch: Patch = { phase, phaseEndsAt: mins ? Date.now() + mins * 60000 : null };
+    if (phase === 'vote' && !room.voting) {
+      if (eligibleSlots(room).length < 3) return;
+      patch.voting = createVoting(room);
+    }
+    const voteRoom = patch.voting ? { ...room, voting: patch.voting as NonNullable<RoomState['voting']> } : room;
     // Demo seats act on their own at each step.
-    if (phase === 'reveal' || phase === 'flipback' || phase === 'teamup' || phase === 'done') {
-      for (const b of bots) if (!Object.keys(room.players[b]?.votes || {}).length) patch[`players.${b}.votes`] = botVotes(room, b);
+    if (phase === 'vote' || phase === 'reveal' || phase === 'flipback' || phase === 'teamup' || phase === 'done') {
+      for (const b of bots) if (!Object.keys(room.players[b]?.votes || {}).length) {
+        patch[`players.${b}.votes`] = botVotes(voteRoom, b);
+        patch[`players.${b}.comments`] = botComments(voteRoom, b);
+      }
     }
     let pairs = room.pairs;
-    if ((phase === 'flipback' || phase === 'teamup') && !pairs) { pairs = pairsToMap(bestPairing(room)); patch.pairs = pairs; }
+    if ((phase === 'flipback' || phase === 'teamup') &&
+        (!pairs || joined.some(s => !pairs?.[s]) || (phase === 'flipback' && !joined.some(s => room.players[s]?.flip)))) {
+      pairs = automaticPairs(room); patch.pairs = pairs;
+    }
     if ((phase === 'flipback' || phase === 'teamup') && pairs) {
       for (const b of bots) { const p = pairs[b]; if (p && room.players[b]?.flip?.of !== p) patch[`players.${b}.flip`] = botFlip(room, b, p); }
     }
@@ -59,13 +75,12 @@ export default function HostPage() {
 
   const fillBots = () => {
     const patch: Patch = {};
-    for (const s of SLOTS) if (!room.players[s.id]) patch[`players.${s.id}`] = botPlayer(s.id);
+    let remaining = demoSize - joined.length;
+    for (const s of SLOTS) if (!room.players[s.id] && remaining > 0) { patch[`players.${s.id}`] = botPlayer(s.id, room); remaining--; }
     store.update(patch);
   };
 
-  const options = pairingOptions(joined);
-  const pairsKey = (o: [SlotId, SlotId][]) => o.map((p) => [...p].sort().join('+')).sort().join(',');
-  const currentKey = room.pairs ? pairsKey(Object.entries(room.pairs).filter(([a, b]) => a < (b as string)) as [SlotId, SlotId][]) : '';
+  const matches = room.pairs || automaticPairs(room);
 
   return (
     <Chassis
@@ -88,6 +103,7 @@ export default function HostPage() {
         </div>
         <div className="screen-title">{PHASE_LABELS[room.phase]}</div>
         <PhasePills phase={room.phase} />
+        <div className="screen-label">SAMPLE: {battleSample(room).label}</div>
         <div className="screen-label">{joined.length}/{SLOTS.length} PLAYERS · {PHASE_HELP[room.phase].toUpperCase()}</div>
       </>}
     >
@@ -98,19 +114,26 @@ export default function HostPage() {
         </div>
         <div className="row">
           <button type="button" className="btn" disabled={idx === 0} onClick={() => goTo(PHASES[idx - 1])}>Back</button>
-          <button type="button" className="btn btn-primary" disabled={idx === PHASES.length - 1} onClick={() => goTo(PHASES[idx + 1])}>
+          <button type="button" className="btn btn-primary" disabled={idx === PHASES.length - 1 || (room.phase === 'studio' && !room.voting && eligibleSlots(room).length < 3)} onClick={() => goTo(PHASES[idx + 1])}>
             Next: {idx < PHASES.length - 1 ? PHASE_LABELS[PHASES[idx + 1]] : 'end'}
           </button>
           <button type="button" className="btn btn-ghost btn-sm" onClick={() => store.update({ phaseEndsAt: (room.phaseEndsAt && room.phaseEndsAt > Date.now() ? room.phaseEndsAt : Date.now()) + 60000 })}>+1 min</button>
           <button type="button" className="btn btn-ghost btn-sm" onClick={() => store.update({ phaseEndsAt: null })}>Clear timer</button>
           <span className="grow" />
-          <button type="button" className="btn btn-ghost btn-sm" disabled={joined.length >= SLOTS.length} onClick={fillBots}>Fill empty seats with demo players</button>
-          <button type="button" className="btn btn-ghost btn-sm" onClick={() => setConfirmReset(true)}>Reset room</button>
+          <label className="field">Demo room size
+            <input className="input" type="number" min={3} max={20} value={demoSize} onChange={e => setDemoSize(Math.max(3, Math.min(20, Number(e.target.value) || 3)))} style={{ width: 90 }} />
+          </label>
+          <button type="button" className="btn btn-ghost btn-sm" disabled={joined.length >= demoSize || !!room.voting} onClick={fillBots}>Fill to {demoSize} with demo players</button>
+          <button type="button" className="btn btn-ghost btn-sm" onClick={() => setConfirmReset(true)}>New battle / reset</button>
         </div>
       </section>
 
+      {room.phase === 'studio' && <p className="hint">{eligibleSlots(room).length}/{joined.length} eligible submissions. At least three are needed to vote. Starting voting locks the eligible beats and a balanced schedule of at most six matchups per person.</p>}
+
+      <RoomChat key={room.battle?.id || 'legacy'} room={room} store={store} author="host" />
+
       <section className="panel">
-        <div className="panel-head"><h2>Players</h2><span className="hint">Seat codes: {SLOTS.map((s) => s.code).join(' · ')}</span></div>
+        <div className="panel-head"><h2>Players</h2><span className="hint">Seat codes: PLAYER1–PLAYER20</span></div>
         <div className="scroll-x">
           <table className="status-grid">
             <thead><tr><th>Seat</th><th>Name</th><th>Taste</th><th>Beat</th><th>Votes</th><th>Flip Back</th><th>Team up</th><th><span className="sr-only">Actions</span></th></tr></thead>
@@ -119,7 +142,7 @@ export default function HostPage() {
                 const p = room.players[s.id];
                 const beat = p?.beat ? normalizeBeat(p.beat) : null;
                 const nVotes = Object.keys(p?.votes || {}).length;
-                const needVotes = p ? matchupsFor(room, s.id).length : 0;
+                const needVotes = voting.schedule[s.id]?.length || 0;
                 return (
                   <tr key={s.id}>
                     <td><span className="row" style={{ gap: 6 }}><span className="dot" style={{ background: s.color }} /><code>{s.code}</code></span></td>
@@ -139,39 +162,30 @@ export default function HostPage() {
       </section>
 
       <section className="panel">
-        <div className="panel-head"><h2>Flip Back pairs</h2><span className="hint">Ranked by shared vibe tags. Pairs are set automatically when you move to Flip Back if you haven’t picked.</span></div>
-        {options.length === 0 ? <p className="hint">Need at least 2 players.</p> : (
+        <div className="panel-head"><h2>Automatic taste matches</h2><span className="hint">Shared tags are matched ignoring case, spacing, and leading # signs. Ties use seat order. Matches lock when Flip Back starts.</span></div>
+        {joined.length < 2 ? <p className="hint">Waiting for at least two players.</p> : (
           <div className="card-list">
-            {[...options].sort((a, b) => score(room, b) - score(room, a)).map((o) => {
-              const k = pairsKey(o);
-              return (
-                <div key={k} className="card stack" style={{ gap: 10, borderColor: k === currentKey ? 'var(--ink)' : undefined }}>
-                  {o.map(([a, b]) => (
-                    <div key={a + b} className="stack" style={{ gap: 4 }}>
-                      <span className="row" style={{ gap: 6 }}><Seat room={room} s={a} /> + <Seat room={room} s={b} /></span>
-                      <span className="hint">{tagOverlap(room, a, b).length ? `Shared: ${tagOverlap(room, a, b).join(', ')}` : 'No shared tags'}</span>
-                    </div>
-                  ))}
-                  <button type="button" className={`btn btn-sm ${k === currentKey ? 'btn-dark' : ''}`} onClick={() => store.update({ pairs: pairsToMap(o) })}>
-                    {k === currentKey ? 'In use' : 'Use these pairs'}
-                  </button>
-                </div>
-              );
-            })}
+            {Object.entries(matches).map(([a, b]) => (
+              <div key={a} className="card stack">
+                <span><strong>{playerName(room, a as SlotId)}</strong> remixes <strong>{playerName(room, b)}</strong></span>
+                <span className="hint">{tagOverlap(room, a as SlotId, b).length ? `Shared: ${tagOverlap(room, a as SlotId, b).join(', ')}` : 'Different tastes — a chance to try something new.'}</span>
+              </div>
+            ))}
           </div>
         )}
+        {joined.length >= 3 && joined.length % 2 === 1 && <p className="hint">One remix circle of three plus pairs: everyone gives and receives a flip. Each group forms a crew only if everyone in it agrees.</p>}
       </section>
 
-      {(room.phase === 'vote' || room.phase === 'reveal' || idx > PHASES.indexOf('reveal')) && (
+      {(room.phase === 'reveal' || idx > PHASES.indexOf('reveal')) && (
         <section className="panel">
           <div className="panel-head"><h2>Leaderboard</h2><span className="hint">Play beats here to show them on the projector.</span></div>
           <div className="stack">
             {standings(room).map((r) => (
               <div key={r.slot} className="rank">
                 <span className="pos">{r.rank}</span>
-                <div className="stack" style={{ gap: 8 }}><Seat room={room} s={r.slot} /><BeatPlayer id={`host-${r.slot}`} beat={normalizeBeat(room.players[r.slot]?.beat)} label={`${playerName(room, r.slot)}’s beat`} /></div>
-                <span style={{ fontFamily: 'var(--mono)' }}>{r.wins} wins</span>
-                <strong style={{ fontFamily: 'var(--mono)' }}>+{r.points}</strong>
+                <div className="stack" style={{ gap: 8 }}><Seat room={room} s={r.slot} /><BeatPlayer id={`host-${r.slot}`} beat={votingBeat(room, r.slot)} label={`${playerName(room, r.slot)}’s beat`} /></div>
+                <span style={{ fontFamily: 'var(--mono)' }}>{r.wins}/{r.judged} wins · {r.judged}/{r.assigned} reviews</span>
+                <strong style={{ fontFamily: 'var(--mono)' }}>{r.judged ? `${Math.round(r.rate * 100)}%` : '—'}</strong>
               </div>
             ))}
           </div>
@@ -181,11 +195,11 @@ export default function HostPage() {
       {confirmReset && (
         <div className="dialog-back" role="dialog" aria-modal="true" aria-labelledby="reset-title">
           <div className="dialog">
-            <h2 id="reset-title">Reset the room?</h2>
-            <p className="hint" style={{ margin: 0 }}>This clears every seat, beat and vote and goes back to the lobby. Players stay on their pages and rejoin automatically.</p>
+            <h2 id="reset-title">Start a new battle?</h2>
+            <p className="hint" style={{ margin: 0 }}>This clears the current seats, beats, votes and feedback, rotates the shared sample, and reshuffles unique sound packs. Players stay on their pages and rejoin automatically.</p>
             <div className="row" style={{ justifyContent: 'flex-end' }}>
               <button type="button" className="btn" onClick={() => setConfirmReset(false)}>Cancel</button>
-              <button type="button" className="btn btn-dark" onClick={() => { store.reset(); setConfirmReset(false); }}>Reset room</button>
+              <button type="button" className="btn btn-dark" onClick={() => { store.reset(); setConfirmReset(false); }}>New battle / reset</button>
             </div>
           </div>
         </div>
@@ -194,7 +208,6 @@ export default function HostPage() {
   );
 }
 
-function score(room: RoomState, o: [SlotId, SlotId][]) { return o.reduce((n, [a, b]) => n + tagOverlap(room, a, b).length, 0); }
 function Seat({ room, s }: { room: RoomState; s: SlotId }) {
   return <span className="chip"><span className="dot" style={{ background: SLOTS.find((x) => x.id === s)!.color }} />{playerName(room, s)}</span>;
 }

@@ -2,14 +2,20 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { getEngine } from '@/lib/audio';
 import { cloneBeat, normalizeBeat } from '@/lib/beat';
-import { BANKS, FLIP_EDIT_LIMIT, LANES, SHARED_LOOPS, SLOTS, SLOT_BY_ID, SURVEY_URL, VIBE_TAGS, type LoopDef, type SlotId } from '@/lib/config';
-import { joinedSlots, matchupsFor, pairKey, playerName, standings, tagOverlap } from '@/lib/game';
+import { LANES, SLOTS, SLOT_BY_ID, SURVEY_URL, type LoopDef, type SlotId } from '@/lib/config';
+import { collaborationGroups, normalizeTags, joinedSlots, matchupsFor, pairKey, playerName, standings, tagOverlap } from '@/lib/game';
 import type { RoomStore } from '@/lib/store';
 import type { Beat, RoomState } from '@/lib/types';
 import { useSyncedBeat } from '@/lib/useSyncedBeat';
 import { BeatPlayer, stopAll } from './Playback';
 import { Studio } from './Studio';
 import { CheckIcon, PlayIcon } from './Icons';
+import { battleSample } from '@/lib/battle';
+import { playerBank } from '@/lib/packs';
+import type { SongPreview as Preview } from '@/lib/songs';
+import { SongPicker, SongPreview } from './SongPreview';
+import { feedbackFor, votePatch, votingBeat } from '@/lib/voting';
+import { PHASES } from '@/lib/config';
 
 type P = { room: RoomState; slot: SlotId };
 type PS = P & { store: RoomStore };
@@ -38,7 +44,7 @@ function LoopList({ loops }: { loops: LoopDef[] }) {
 }
 
 export function Lobby({ room, slot }: P) {
-  const bank = BANKS[SLOT_BY_ID[slot].bank];
+  const bank = playerBank(room.players[slot], slot, room);
   const joined = joinedSlots(room);
   return (
     <>
@@ -48,8 +54,8 @@ export function Lobby({ room, slot }: P) {
         <div className="row" style={{ justifyContent: 'center' }}>{joined.map((s) => <SeatChip key={s} room={room} slot={s} />)}</div>
       </section>
       <section className="panel">
-        <div className="panel-head"><h2>Your sounds</h2><span className="hint">Everyone shares the vocal chop. The other loops are yours alone, but every bank fits together.</span></div>
-        <LoopList loops={[...SHARED_LOOPS, ...bank.loops]} />
+        <div className="panel-head"><h2>Your sounds</h2><span className="hint">Everyone shares this battle’s main sample. {room.battle ? 'Your complementary pack is unique to you in this battle.' : 'Start a new battle to get unique packs.'}</span></div>
+        <LoopList loops={[...battleSample(room).loops, ...bank.loops]} />
       </section>
     </>
   );
@@ -58,16 +64,22 @@ export function Lobby({ room, slot }: P) {
 export function TasteDrop({ room, store, slot }: PS) {
   const mine = room.players[slot]?.taste;
   const [song, setSong] = useState(mine?.song || '');
-  const [tags, setTags] = useState<string[]>(mine?.tags || []);
+  const [tags, setTags] = useState<string[]>(mine?.tags || ['', '']);
+  const [preview, setPreview] = useState<Preview | undefined>(mine?.preview);
+  const [saving, setSaving] = useState(false);
   const [editing, setEditing] = useState(!mine);
   const [error, setError] = useState('');
-  const toggle = (t: string) => { setError(''); setTags((cur) => cur.includes(t) ? cur.filter((x) => x !== t) : cur.length >= 2 ? [cur[1], t] : [...cur, t]); };
-  const save = (e: React.FormEvent) => {
+  const save = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!song.trim()) { setError('Add a song (artist and title).'); return; }
-    if (tags.length !== 2) { setError('Pick exactly 2 vibe tags.'); return; }
-    store.update({ [`players.${slot}.taste`]: { song: song.trim().slice(0, 80), tags } });
-    setEditing(false);
+    const normalized = normalizeTags(tags);
+    if (normalized.length !== 2) { setError('Write two different vibe tags.'); return; }
+    setSaving(true);
+    try {
+      await store.update({ [`players.${slot}.taste`]: { song: song.trim().slice(0, 100), tags: normalized, ...(preview ? { preview } : {}) } });
+      setEditing(false);
+    } catch { setError('Your taste could not be saved. Please try again.'); }
+    finally { setSaving(false); }
   };
   const wall = joinedSlots(room).filter((s) => room.players[s]?.taste);
   return (
@@ -78,14 +90,20 @@ export function TasteDrop({ room, store, slot }: PS) {
             <h2 style={{ fontSize: 20 }}>Drop one song that defines your taste</h2>
             <div className="field">
               <label htmlFor="song">Song</label>
-              <input id="song" className="input" value={song} maxLength={80} placeholder="Artist – Title" onChange={(e) => { setSong(e.target.value); setError(''); }} />
+              <input id="song" className="input" value={song} maxLength={100} placeholder="Artist – Title" onChange={(e) => { setSong(e.target.value); setPreview(undefined); setError(''); }} />
             </div>
+            <SongPicker song={song} preview={preview} onPick={selected => { setPreview(selected); if (selected) setSong(selected.title.slice(0, 100)); }} />
             <fieldset className="stack" style={{ border: 0, padding: 0, margin: 0, gap: 10 }}>
-              <legend className="field" style={{ marginBottom: 10 }}><span style={{ fontSize: 12, fontWeight: 600, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.6px' }}>Pick 2 vibe tags ({tags.length}/2)</span></legend>
-              <div className="row">{VIBE_TAGS.map((t) => <button key={t} type="button" className="tag" aria-pressed={tags.includes(t)} onClick={() => toggle(t)}>{t}</button>)}</div>
+              <legend>Write two vibe tags</legend>
+              <span className="hint">Describe the music in your own words. Matching ignores capitals, extra spaces, and # signs; use shared words to find similar tastes.</span>
+              {[0, 1].map(i => <div className="field" key={i}>
+                <label htmlFor={`vibe-${i}`}>Vibe {i + 1}</label>
+                <input id={`vibe-${i}`} className="input" maxLength={30} value={tags[i] || ''} placeholder={i === 0 ? 'e.g. late night' : 'e.g. bouncy'}
+                  onChange={e => { setTags(current => [0, 1].map(j => j === i ? e.target.value : current[j] || '')); setError(''); }} />
+              </div>)}
             </fieldset>
             {error && <p className="error" role="alert" style={{ margin: 0 }}>{error}</p>}
-            <div><button type="submit" className="btn btn-primary">Drop it on the wall</button></div>
+            <div><button type="submit" className="btn btn-primary" disabled={saving}>{saving ? 'Saving…' : 'Drop it on the wall'}</button></div>
           </form>
         </section>
       ) : (
@@ -103,6 +121,7 @@ export function TasteDrop({ room, store, slot }: PS) {
               <div key={s} className="card stack" style={{ gap: 8, borderColor: s === slot ? 'var(--ink)' : undefined }}>
                 <SeatChip room={room} slot={s} />
                 <strong style={{ fontSize: 15 }}>{t.song}</strong>
+                <SongPreview key={t.preview?.url} preview={t.preview} />
                 <div className="row" style={{ gap: 6 }}>{t.tags.map((tg) => <span key={tg} className="tag tag-sm">{tg}</span>)}</div>
               </div>
             );
@@ -118,46 +137,79 @@ export function Vote({ room, store, slot }: PS) {
   const votes = room.players[slot]?.votes || {};
   const nextIdx = matchups.findIndex(([a, b]) => !votes[pairKey(a, b)]);
   const [viewIdx, setViewIdx] = useState<number | null>(null);
-  const idx = viewIdx ?? (nextIdx === -1 ? matchups.length : nextIdx);
+  const [pending, setPending] = useState<{ idx: number; slot: SlotId } | null>(null);
+  const [voteError, setVoteError] = useState('');
+  const [comments, setComments] = useState<Partial<Record<SlotId, string>>>({ ...room.players[slot]?.comments });
+  const busy = useRef(false);
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  const idx = pending?.idx ?? viewIdx ?? (nextIdx === -1 ? matchups.length : nextIdx);
   useEffect(() => () => stopAll(), []);
 
   if (matchups.length === 0) {
+    if (room.voting && room.voting.slots.length >= 3) return <section className="panel big-center"><h1>Voting is underway</h1><p>Your beat wasn’t among the eligible submissions when voting started, so you have no assigned matchups this round. You can join the remix afterward.</p></section>;
     return <section className="panel big-center"><h1>Not enough beats to vote on yet</h1><p>Voting needs at least 3 submitted beats. Hang tight.</p></section>;
   }
   if (idx >= matchups.length) {
     return (
       <section className="panel big-center">
         <h1>All {matchups.length} votes in</h1>
-        <p>Nice ears. The reveal is next.</p>
+        <p>Your votes and comments are saved. Creators will see your feedback and name after the reveal.</p>
         <button type="button" className="btn btn-ghost btn-sm" onClick={() => setViewIdx(0)}>Review my votes</button>
       </section>
     );
   }
   const [a, b] = matchups[idx];
   const key = pairKey(a, b);
-  const picked = votes[key];
-  const choose = (w: SlotId) => { stopAll(); store.update({ [`players.${slot}.votes.${key}`]: w }); setViewIdx(null); };
+  const picked = pending?.slot ?? votes[key];
+  const choose = async (w: SlotId) => {
+    if (busy.current) return;
+    busy.current = true;
+    stopAll(); setVoteError(''); setPending({ idx, slot: w });
+    try {
+      await Promise.all([
+        store.update(votePatch(room, slot, a, b, w, comments)),
+        new Promise(resolve => setTimeout(resolve, 750)),
+      ]);
+      if (mounted.current) setViewIdx(null);
+    } catch {
+      if (mounted.current) setVoteError('Your vote could not be saved. Please try again.');
+    } finally {
+      busy.current = false;
+      if (mounted.current) setPending(null);
+    }
+  };
   return (
     <section className="panel">
       <div className="panel-head">
         <h2>Matchup {idx + 1} of {matchups.length}: which flip hits harder?</h2>
-        <span className="hint">Names stay hidden until the reveal.</span>
+        <span className="hint">Names stay hidden until the reveal. Your schedule balances how often each beat is heard.</span>
       </div>
+      <p className="hint">Listen to both beats, leave a kind, specific comment, then pick your favorite. Try “I felt…” or “One thing you could try…”. Comments are optional and save with your vote; creators see your name after reveal.</p>
       <div className="versus">
         {([a, b] as SlotId[]).map((s, i) => (
           <div key={s} className="choice" data-picked={picked === s}>
             <h3>Beat {i === 0 ? 'A' : 'B'}</h3>
-            <BeatPlayer id={`vote-${key}-${s}`} beat={normalizeBeat(room.players[s]?.beat)} label={`Beat ${i === 0 ? 'A' : 'B'}`} big />
-            <button type="button" className={`btn ${picked === s ? 'btn-dark' : ''}`} onClick={() => choose(s)}>
-              {picked === s ? 'Picked' : `Pick Beat ${i === 0 ? 'A' : 'B'}`}
+            <BeatPlayer id={`vote-${key}-${s}`} beat={votingBeat(room, s)} label={`Beat ${i === 0 ? 'A' : 'B'}`} big />
+            <div className="field">
+              <label htmlFor={`comment-${s}`}>A note for Beat {i === 0 ? 'A' : 'B'}’s creator</label>
+              <textarea id={`comment-${s}`} className="comment-input" rows={3} maxLength={280} disabled={!!pending} value={comments[s] ?? ''}
+                placeholder="What stood out? What feeling did it give you?"
+                onChange={e => setComments(current => ({ ...current, [s]: e.target.value }))} />
+              <span className="hint">{(comments[s] || '').length}/280 · {room.players[slot]?.comments?.[s] ? 'Previously saved; you can update it.' : 'Saves when you pick A or B.'}</span>
+            </div>
+            <button type="button" disabled={!!pending} className={`btn vote-pick ${picked === s ? 'vote-picked' : ''} ${pending?.slot === s ? 'vote-confirm' : ''}`} onClick={() => choose(s)}>
+              {picked === s ? '✓ Picked' : `Pick Beat ${i === 0 ? 'A' : 'B'}`}
             </button>
           </div>
         )).reduce<React.ReactNode[]>((acc, el, i) => (i === 0 ? [el] : [...acc, <span key="vs" className="vs" aria-hidden="true">VS</span>, el]), [])}
       </div>
+      {pending && <p className="ok" role="status">Beat {pending.slot === a ? 'A' : 'B'} selected. Saving your vote…</p>}
+      {voteError && <p className="error" role="alert">{voteError}</p>}
       {viewIdx !== null && (
         <div className="row" style={{ marginTop: 14, justifyContent: 'space-between' }}>
-          <button type="button" className="btn btn-ghost btn-sm" disabled={idx === 0} onClick={() => setViewIdx(idx - 1)}>Previous</button>
-          <button type="button" className="btn btn-ghost btn-sm" onClick={() => setViewIdx(idx + 1 >= matchups.length ? null : idx + 1)}>Next</button>
+          <button type="button" className="btn btn-ghost btn-sm" disabled={!!pending || idx === 0} onClick={() => setViewIdx(idx - 1)}>Previous</button>
+          <button type="button" className="btn btn-ghost btn-sm" disabled={!!pending} onClick={() => setViewIdx(idx + 1 >= matchups.length ? null : idx + 1)}>Next</button>
         </div>
       )}
     </section>
@@ -168,23 +220,35 @@ export function Reveal({ room, slot }: P) {
   const rows = standings(room);
   return (
     <section className="panel">
-      <div className="panel-head"><h2>Results</h2><span className="hint">Wins out of the blind matchups each beat appeared in. Everyone gets 10 points for finishing.</span></div>
+      <div className="panel-head"><h2>Results</h2><span className="hint">Ranked by win percentage. Every beat has equal scheduled exposure; completed reviews may vary if someone hasn’t finished voting. Ties share a rank.</span></div>
       <div className="stack">
         {rows.map((r) => (
           <div key={r.slot} className="rank" data-me={r.slot === slot}>
             <span className="pos">{r.rank}</span>
             <div className="stack" style={{ gap: 8 }}>
               <span className="row" style={{ gap: 8 }}><SeatChip room={room} slot={r.slot} />{r.slot === slot && <span className="hint">you</span>}</span>
-              <BeatPlayer id={`reveal-${r.slot}`} beat={normalizeBeat(room.players[r.slot]?.beat)} label={`${playerName(room, r.slot)}’s beat`} />
+              <BeatPlayer id={`reveal-${r.slot}`} beat={votingBeat(room, r.slot)} label={`${playerName(room, r.slot)}’s beat`} />
             </div>
-            <span className="mono" style={{ fontFamily: 'var(--mono)' }}>{r.wins} {r.wins === 1 ? 'win' : 'wins'}</span>
-            <strong style={{ fontFamily: 'var(--mono)' }}>+{r.points} pts</strong>
+            <span className="mono" style={{ fontFamily: 'var(--mono)' }}>{r.wins}/{r.judged} wins<br /><span className="hint">{r.judged}/{r.assigned} reviews</span></span>
+            <strong style={{ fontFamily: 'var(--mono)' }}>{r.judged ? `${Math.round(r.rate * 100)}%` : '—'}</strong>
           </div>
         ))}
       </div>
       <p className="hint" style={{ marginTop: 14 }}>Next: Flip Back. You’ll be paired with someone whose taste matches yours to finish each other’s beats.</p>
     </section>
   );
+}
+
+export function SubmissionFeedback({ room, slot }: P) {
+  if (PHASES.indexOf(room.phase) < PHASES.indexOf('reveal')) return null;
+  const feedback = feedbackFor(room, slot);
+  return <section className="panel">
+    <div className="panel-head"><h2>What people heard in your beat</h2><span className="hint">Feedback from your blind matchups · {feedback.length} {feedback.length === 1 ? 'note' : 'notes'}</span></div>
+    <p className="hint">Keep an idea that resonates with you and bring it into your next flip. These notes stay available through the end of the battle.</p>
+    {feedback.length ? <div className="card-list">{feedback.map(note => <article key={note.author} className="card stack">
+      <SeatChip room={room} slot={note.author} /><p className="feedback-text">{note.text}</p>
+    </article>)}</div> : <p className="hint">No comments were left on your beat this round. Comments are optional.</p>}
+  </section>;
 }
 
 function MatchCard({ room, slot, partner }: P & { partner: SlotId }) {
@@ -208,7 +272,7 @@ function MatchCard({ room, slot, partner }: P & { partner: SlotId }) {
 export function FlipBack({ room, store, slot }: PS) {
   const partner = room.pairs?.[slot];
   if (!partner) {
-    return <section className="panel big-center"><h1>Finding your match…</h1><p>The host is pairing everyone by the vibe tags from Taste Drop.</p></section>;
+    return <section className="panel big-center"><h1>Finding your match…</h1><p>Matching runs automatically from your vibe tags. At least two players are needed.</p></section>;
   }
   return <FlipEditor key={partner} room={room} store={store} slot={slot} partner={partner} />;
 }
@@ -221,11 +285,10 @@ function FlipEditor({ room, store, slot, partner }: PS & { partner: SlotId }) {
   const done = !!(mine && mine.of === partner && mine.done);
   const editsRef = useRef(edits);
   editsRef.current = edits;
-  const [beat, setBeat, replace, cancelSave] = useSyncedBeat(start, (b) => store.update({ [`players.${slot}.flip`]: { of: partner, beat: b, edits: editsRef.current, done: false } }));
-  const left = FLIP_EDIT_LIMIT - edits;
-  const bank = BANKS[SLOT_BY_ID[slot].bank];
+  const [beat, setBeat, replace, cancelSave] = useSyncedBeat(start, (b) => store.update({ [`players.${slot}.flip`]: { of: partner, beat: b, edits: editsRef.current, done: false } }, room.battle?.id));
+  const bank = playerBank(room.players[slot], slot, room);
 
-  const onChange = (b: Beat) => { if (left <= 0) return; setEdits(edits + 1); editsRef.current = edits + 1; setBeat(b); };
+  const onChange = (b: Beat) => { setEdits(edits + 1); editsRef.current = edits + 1; setBeat(b); };
   const resetAll = () => { setEdits(0); editsRef.current = 0; replace(cloneBeat(original)); store.update({ [`players.${slot}.flip`]: { of: partner, beat: original, edits: 0, done: false } }); };
   const finish = () => { stopAll(); cancelSave(); store.update({ [`players.${slot}.flip`]: { of: partner, beat, edits, done: true } }); };
 
@@ -233,7 +296,7 @@ function FlipEditor({ room, store, slot, partner }: PS & { partner: SlotId }) {
     <><span className="ok row" style={{ gap: 6 }}><CheckIcon /> Sent to {playerName(room, partner)}</span>
       <button type="button" className="btn btn-ghost btn-sm" onClick={() => store.update({ [`players.${slot}.flip.done`]: false })}>Keep editing</button></>
   ) : (
-    <><span className="edits" aria-live="polite">{left} {left === 1 ? 'edit' : 'edits'} left</span>
+    <><span className="edits" aria-live="polite">{edits} edits · unlimited</span>
       <button type="button" className="btn btn-ghost btn-sm" disabled={edits === 0} onClick={resetAll}>Undo all</button>
       <button type="button" className="btn btn-dark" onClick={finish}>Done</button></>
   );
@@ -241,9 +304,9 @@ function FlipEditor({ room, store, slot, partner }: PS & { partner: SlotId }) {
   return (
     <>
       <MatchCard room={room} slot={slot} partner={partner} />
-      <Studio playKey={`flip-${slot}`} beat={beat} onChange={onChange} canEdit={!done && left > 0} actions={actions}
-        loops={[...SHARED_LOOPS, ...bank.loops]} loopsTitle={`Flip ${playerName(room, partner)}’s beat`}
-        loopsHint={`Add your sounds to their beat. Each loop placed or removed, drum hit or kit change is one edit (${FLIP_EDIT_LIMIT} total).`} />
+      <Studio playKey={`flip-${slot}`} beat={beat} onChange={onChange} canEdit={!done} actions={actions}
+        loops={[...battleSample(room).loops, ...bank.loops]} loopsTitle={`Flip ${playerName(room, partner)}’s beat`}
+        loopsHint="Add your sounds to their beat. Unlimited edits — press Done when you’re ready." />
     </>
   );
 }
@@ -252,10 +315,16 @@ export function TeamUp({ room, store, slot }: PS) {
   const partner = room.pairs?.[slot];
   useEffect(() => () => stopAll(), []);
   if (!partner) return <section className="panel big-center"><h1>No partner this round</h1><p>Odd numbers happen. You’ll be first in line next battle.</p></section>;
-  const theirFlip = room.players[partner]?.flip;
+  const incoming = joinedSlots(room).find(s => room.pairs?.[s] === slot);
+  const incomingName = incoming ? playerName(room, incoming) : 'Your collaborator';
+  const theirFlip = incoming ? room.players[incoming]?.flip : undefined;
+  const group = collaborationGroups(room).find(g => g.includes(slot)) || [slot, partner];
+  const others = group.filter(s => s !== slot);
+  const groupNames = others.map(s => playerName(room, s)).join(' and ');
+  const waiting = others.some(s => room.players[s]?.teamUp == null);
+  const allYes = group.every(s => room.players[s]?.teamUp === true);
   const myFlip = room.players[slot]?.flip;
   const mine = room.players[slot]?.teamUp;
-  const theirs = room.players[partner]?.teamUp;
   const name = playerName(room, partner);
   const answer = (v: boolean) => store.update({ [`players.${slot}.teamUp`]: v });
 
@@ -265,9 +334,9 @@ export function TeamUp({ room, store, slot }: PS) {
         <div className="panel-head"><h2>Hear what you made together</h2></div>
         <div className="versus">
           <div className="choice">
-            <h3>Your beat, flipped by {name}</h3>
-            {theirFlip && theirFlip.of === slot ? <BeatPlayer id="tu-mine" beat={normalizeBeat(theirFlip.beat)} label={`your beat flipped by ${name}`} big />
-              : <p className="hint" style={{ margin: 0 }}>{name} didn’t send a flip.</p>}
+            <h3>Your beat, flipped by {incomingName}</h3>
+            {theirFlip && theirFlip.of === slot ? <BeatPlayer id="tu-mine" beat={normalizeBeat(theirFlip.beat)} label={`your beat flipped by ${incomingName}`} big />
+              : <p className="hint" style={{ margin: 0 }}>{incomingName} hasn’t sent a flip yet.</p>}
             <span className="hint">Original:</span>
             <BeatPlayer id="tu-mine-orig" beat={normalizeBeat(room.players[slot]?.beat)} label="your original beat" />
           </div>
@@ -284,20 +353,20 @@ export function TeamUp({ room, store, slot }: PS) {
       <section className="panel big-center" style={{ padding: 28 }}>
         {mine === undefined || mine === null ? (
           <>
-            <h1>Team up with {name} for the next battle?</h1>
-            <p>Your answer is private. {name} only finds out if you both say yes.</p>
+            <h1>Form a crew with {groupNames}?</h1>
+            <p>A crew forms only when everyone in this remix group says yes.</p>
             <div className="row" style={{ justifyContent: 'center' }}>
               <button type="button" className="btn btn-primary" onClick={() => answer(true)}>Yes, form a crew</button>
               <button type="button" className="btn" onClick={() => answer(false)}>Not this time</button>
             </div>
           </>
-        ) : theirs === undefined || theirs === null ? (
-          <><h1>Answer saved</h1><p>Waiting for {name} to answer.</p>
+        ) : waiting ? (
+          <><h1>Answer saved</h1><p>Waiting for your collaborators to answer.</p>
             <button type="button" className="btn btn-ghost btn-sm" onClick={() => store.update({ [`players.${slot}.teamUp`]: null })}>Change my answer</button></>
-        ) : mine && theirs ? (
-          <><h1>You and {name} are a crew</h1><p>You’ll enter the next battle together and see each other’s flips first.</p></>
+        ) : allYes ? (
+          <><h1>You, {groupNames}: a crew</h1><p>You all chose to collaborate again.</p></>
         ) : (
-          <><h1>No crew this time</h1><p>You’ll get a new match next battle.</p></>
+          <><h1>No crew this time</h1><p>Thanks for trying a collaboration together.</p></>
         )}
       </section>
     </>
@@ -305,17 +374,12 @@ export function TeamUp({ room, store, slot }: PS) {
 }
 
 export function Done({ room, slot }: P) {
-  const crews: [SlotId, SlotId][] = [];
-  const seen = new Set<SlotId>();
-  for (const [a, b] of Object.entries(room.pairs || {}) as [SlotId, SlotId][]) {
-    if (seen.has(a) || seen.has(b)) continue; seen.add(a); seen.add(b);
-    if (room.players[a]?.teamUp && room.players[b]?.teamUp) crews.push([a, b]);
-  }
+  const crews = collaborationGroups(room).filter(group => group.every(s => room.players[s]?.teamUp === true));
   return (
     <section className="panel big-center">
       <h1>That’s the battle</h1>
       <p>{crews.length ? `${crews.length} ${crews.length === 1 ? 'crew' : 'crews'} formed today.` : 'No crews formed this time, which is useful to know too.'}</p>
-      <div className="stack">{crews.map(([a, b]) => <div key={a} className="row" style={{ justifyContent: 'center' }}><SeatChip room={room} slot={a} /><span>+</span><SeatChip room={room} slot={b} /></div>)}</div>
+      <div className="stack">{crews.map(group => <div key={group.join('-')} className="row" style={{ justifyContent: 'center' }}>{group.map(s => <SeatChip key={s} room={room} slot={s} />)}</div>)}</div>
       {SURVEY_URL && <a className="btn btn-primary" href={SURVEY_URL} target="_blank" rel="noreferrer" style={{ textDecoration: 'none' }}>Give feedback (2 min)</a>}
       <p className="hint">Thanks for playing{room.players[slot]?.name ? `, ${room.players[slot]!.name}` : ''}.</p>
     </section>

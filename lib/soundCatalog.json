@@ -1,0 +1,194 @@
+{
+  "banks": [
+    {
+      "id": "pack5",
+      "label": "Amber Keys",
+      "names": [
+        "Amber pad",
+        "Music-box steps",
+        "Soft sub",
+        "Air shimmer"
+      ]
+    },
+    {
+      "id": "pack6",
+      "label": "Ocean Glass",
+      "names": [
+        "Glass harmony",
+        "Ripple notes",
+        "Deep tide",
+        "Sea mist"
+      ]
+    },
+    {
+      "id": "pack7",
+      "label": "Copper Plucks",
+      "names": [
+        "Copper chords",
+        "Muted plucks",
+        "Rubber bass",
+        "Tape flutter"
+      ]
+    },
+    {
+      "id": "pack8",
+      "label": "Moonlit Choir",
+      "names": [
+        "Moon choir",
+        "Hollow bells",
+        "Low hum",
+        "Starlight"
+      ]
+    },
+    {
+      "id": "pack9",
+      "label": "Velvet Bells",
+      "names": [
+        "Velvet keys",
+        "Bell cascade",
+        "Warm bass",
+        "Soft swell"
+      ]
+    },
+    {
+      "id": "pack10",
+      "label": "Neon Current",
+      "names": [
+        "Neon chords",
+        "Pulse lead",
+        "Synth sub",
+        "Electric haze"
+      ]
+    },
+    {
+      "id": "pack11",
+      "label": "Paper Dreams",
+      "names": [
+        "Paper pad",
+        "Tiny keys",
+        "Round low",
+        "Dust trail"
+      ]
+    },
+    {
+      "id": "pack12",
+      "label": "Silver Strings",
+      "names": [
+        "Silver harmony",
+        "String plucks",
+        "Steady bass",
+        "Bright sweep"
+      ]
+    },
+    {
+      "id": "pack13",
+      "label": "Aurora Dust",
+      "names": [
+        "Aurora pad",
+        "Crystal notes",
+        "Mellow sub",
+        "Noise bloom"
+      ]
+    },
+    {
+      "id": "pack14",
+      "label": "Golden Echo",
+      "names": [
+        "Golden chords",
+        "Echo pluck",
+        "Sine bass",
+        "Light rain"
+      ]
+    },
+    {
+      "id": "pack15",
+      "label": "Crystal Tide",
+      "names": [
+        "Tide keys",
+        "Glass melody",
+        "Smooth low",
+        "Ocean lift"
+      ]
+    },
+    {
+      "id": "pack16",
+      "label": "Twilight Bloom",
+      "names": [
+        "Twilight pad",
+        "Soft arpeggio",
+        "Warm low",
+        "Cloud rise"
+      ]
+    },
+    {
+      "id": "pack17",
+      "label": "Ember Waves",
+      "names": [
+        "Ember keys",
+        "Brittle bells",
+        "Deep bass",
+        "Ember crackle"
+      ]
+    },
+    {
+      "id": "pack18",
+      "label": "Indigo Sparks",
+      "names": [
+        "Indigo chords",
+        "Spark lead",
+        "Pulse low",
+        "Night shimmer"
+      ]
+    },
+    {
+      "id": "pack19",
+      "label": "Satin Clouds",
+      "names": [
+        "Satin harmony",
+        "Dream plucks",
+        "Silky bass",
+        "Gentle fall"
+      ]
+    },
+    {
+      "id": "pack20",
+      "label": "Prism Garden",
+      "names": [
+        "Prism chords",
+        "Garden bells",
+        "Soft pulse",
+        "Prism wash"
+      ]
+    }
+  ],
+  "samples": [
+    {
+      "id": "theme1",
+      "label": "Glass Garden"
+    },
+    {
+      "id": "theme2",
+      "label": "Midnight Keys"
+    },
+    {
+      "id": "theme3",
+      "label": "Neon Pulse"
+    },
+    {
+      "id": "theme4",
+      "label": "Paper Lanterns"
+    },
+    {
+      "id": "theme5",
+      "label": "Velvet Haze"
+    },
+    {
+      "id": "theme6",
+      "label": "Arcade Rain"
+    },
+    {
+      "id": "theme7",
+      "label": "Orbit Chimes"
+    }
+  ]
+}

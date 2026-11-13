@@ -1,14 +1,16 @@
 'use client';
-import { HOST_CODE, SLOTS, type SlotId } from './config';
+import { HOST_CODE, SLOTS, type BankId, type SlotId } from './config';
 
-export interface Session { role: 'player' | 'host'; slot?: SlotId; name: string }
+export interface Session { role: 'player' | 'host'; slot?: SlotId; name: string; bank?: BankId }
 const KEY = 'flipthis.session';
 
 export function resolveCode(code: string): { role: 'host' } | { role: 'player'; slot: SlotId } | null {
   const c = code.trim().toUpperCase();
   if (!c) return null;
   if (c === HOST_CODE.toUpperCase()) return { role: 'host' };
-  const slot = SLOTS.find((s) => s.code === c);
+  // Old codes remain aliases so existing facilitator notes still work.
+  const legacyCodes = ['PEACH', 'SKY', 'MINT', 'LILAC'];
+  const slot = SLOTS.find((s, i) => s.code === c || legacyCodes[i] === c);
   return slot ? { role: 'player', slot: slot.id } : null;
 }
 

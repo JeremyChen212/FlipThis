@@ -5,6 +5,7 @@ import { BATTLE_NAME, BPM, KEY_LABEL } from '@/lib/config';
 import { loadSession, resolveCode, saveSession } from '@/lib/session';
 import { hasFirebase } from '@/lib/store';
 import { Chassis } from '@/components/Chassis';
+import { randomBank } from '@/lib/packs';
 
 export default function JoinPage() {
   const router = useRouter();
@@ -27,7 +28,7 @@ export default function JoinPage() {
     if (resolved.role === 'host') { saveSession({ role: 'host', name: 'Host' }); router.push('/host'); return; }
     const n = name.trim();
     if (!n) { setError('Add your first name so others can find you.'); return; }
-    saveSession({ role: 'player', slot: resolved.slot, name: n.slice(0, 20) });
+    saveSession({ role: 'player', slot: resolved.slot, name: n.slice(0, 20), bank: randomBank() });
     router.push('/play');
   }
 
@@ -49,7 +50,7 @@ export default function JoinPage() {
             <label htmlFor="code">Seat code</label>
             <input id="code" className="input input-code" value={code} autoComplete="off" autoCapitalize="characters" spellCheck={false}
               onChange={(e) => { setCode(e.target.value); setError(''); }} placeholder="CODE" aria-describedby="code-help" />
-            <span id="code-help" className="hint">Your facilitator gives each of the 4 players a code.</span>
+            <span id="code-help" className="hint">Your facilitator gives you a code (PLAYER1–PLAYER20). Your sound pack is assigned randomly.</span>
           </div>
           {!isHost && (
             <div className="field">

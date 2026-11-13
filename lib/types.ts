@@ -1,4 +1,5 @@
-import type { DrumRow, KitId, LaneId, Phase, SlotId } from './config';
+import type { BankId, DrumRow, KitId, LaneId, Phase, SlotId } from './config';
+import type { SongPreview } from './songs';
 
 /** A beat is plain data so it can be synced, voted on and flipped. */
 export interface Beat {
@@ -9,7 +10,7 @@ export interface Beat {
   steps: Record<DrumRow, number[]>;
 }
 
-export interface Taste { song: string; tags: string[] }
+export interface Taste { song: string; tags: string[]; preview?: SongPreview }
 
 export interface FlipState {
   /** Whose beat this player is flipping. */
@@ -22,25 +23,57 @@ export interface FlipState {
 export interface PlayerState {
   name: string;
   joinedAt: number;
+  bank?: BankId;
   taste?: Taste;
   beat?: Beat;
   submitted?: boolean;
   /** pair key ("p1-p2") -> winning slot */
   votes?: Record<string, SlotId>;
+  /** One editable comment per reviewed creator, saved alongside votes. */
+  comments?: Partial<Record<SlotId, string>>;
   flip?: FlipState;
   teamUp?: boolean | null;
-  /** Demo player filled in by the host when fewer than 4 people show up. */
+  /** Demo player filled in by the host when rehearsing without enough people. */
   bot?: boolean;
+  demoTasteVersion?: number;
+}
+
+export interface VotingState {
+  slots: SlotId[];
+  beats: Partial<Record<SlotId, Beat>>;
+  schedule: Partial<Record<SlotId, [SlotId, SlotId][]>>;
 }
 
 export interface RoomState {
+  chat?: Record<string, ChatMessage>;
+  chatSequence?: number;
+  battle?: BattleSetup;
+  voting?: VotingState;
   phase: Phase;
   /** Epoch ms when the current phase timer ends, or null for no timer. */
   phaseEndsAt: number | null;
   players: Partial<Record<SlotId, PlayerState>>;
-  /** slot -> partner slot for Flip Back */
+  /** slot -> whose beat they remix; reciprocal pairs or a three-player circle */
   pairs: Partial<Record<SlotId, SlotId>> | null;
   updatedAt: number;
+}
+
+export interface ChatMessage {
+  id: string;
+  author: SlotId | 'host';
+  name: string;
+  text: string;
+  phase: Phase;
+  sequence: number;
+  createdAt: number;
+}
+
+export interface BattleSetup {
+  id: string;
+  sampleId: string;
+  /** Remaining samples in the current shuffled rotation. */
+  sampleQueue: string[];
+  packs: Record<SlotId, BankId>;
 }
 
 export const EMPTY_ROOM: RoomState = { phase: 'lobby', phaseEndsAt: null, players: {}, pairs: null, updatedAt: 0 };

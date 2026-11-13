@@ -1,8 +1,9 @@
 'use client';
 import { useEffect, useState } from 'react';
 import { getEngine } from '@/lib/audio';
-import { BARS, STEPS } from '@/lib/config';
+import { BARS } from '@/lib/config';
 import type { Beat } from '@/lib/types';
+import { drumStepCount } from '@/lib/beat';
 import { PlayIcon, StopIcon } from './Icons';
 
 /** Which beat (by key) the shared engine is playing, so only one plays at a time. */
@@ -35,7 +36,8 @@ export function usePosition() {
 export function BeatPlayer({ id, beat, label, big }: { id: string; beat: Beat; label: string; big?: boolean }) {
   const playing = usePlaying() === id;
   const { bar, step } = usePosition();
-  const pct = playing && bar >= 0 ? ((bar * STEPS + step + 1) / (BARS * STEPS)) * 100 : 0;
+  const count = drumStepCount(beat);
+  const pct = playing && bar >= 0 ? ((bar * count + step + 1) / (BARS * count)) * 100 : 0;
   useEffect(() => () => { if (current === id) stopAll(); }, [id]);
   return (
     <div className="row" style={{ gap: 12, flexWrap: 'nowrap' }}>

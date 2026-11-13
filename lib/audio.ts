@@ -1,6 +1,7 @@
 'use client';
-import { BAR_SECONDS, BARS, BPM, DRUM_ROWS, KITS, LANES, LOOP_BARS, LOOP_BY_ID, STEPS, drumFile, type DrumRow, type KitId, type LaneId } from './config';
+import { BAR_SECONDS, BARS, BPM, DRUM_ROWS, KITS, LANES, LOOP_BARS, LOOP_BY_ID, drumFile, type DrumRow, type KitId, type LaneId } from './config';
 import type { Beat } from './types';
+import { drumStepCount } from './beat';
 
 type ToneNS = typeof import('tone');
 type Player = import('tone').Player;
@@ -113,7 +114,7 @@ class AudioEngine {
     transport.bpm.value = BPM;
     transport.cancel();
     transport.position = 0;
-    transport.scheduleRepeat((time) => this.tick(time), '8n', 0);
+    transport.scheduleRepeat((time) => this.tick(time), '16n', 0);
     transport.start('+0.06');
     this.playing = true;
   }
@@ -132,12 +133,15 @@ class AudioEngine {
 
   private tick(time: number) {
     const T = this.T!; const beat = this.beat;
-    const step = this.counter % STEPS;
-    const bar = Math.floor(this.counter / STEPS) % BARS;
+    const subdivision = this.counter % 16;
+    const bar = Math.floor(this.counter / 16) % BARS;
     this.counter++;
     if (!beat) return;
+    const count = drumStepCount(beat);
+    const stride = 16 / count;
+    const step = Math.floor(subdivision / stride);
 
-    if (step === 0) {
+    if (subdivision === 0) {
       for (const lane of LANES) {
         const want = beat.place[lane.id]?.[String(bar)];
         const run = this.runs[lane.id];
@@ -156,7 +160,7 @@ class AudioEngine {
       }
     }
 
-    if (beat.drumOn[bar]) {
+    if (beat.drumOn[bar] && subdivision % stride === 0) {
       for (const row of DRUM_ROWS) {
         if (beat.steps[row.id]?.[step]) {
           const p = this.drumPlayers.get(`${beat.kit}_${row.id}`);
