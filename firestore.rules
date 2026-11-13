@@ -1,10 +1,10 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Class prototype: anyone with the link can read and write the battle rooms.
-    // Lock this down (or delete the project) after the prototyping sessions.
-    match /rooms/{roomId} {
-      allow read, write: if true;
+    // Online rooms use the Next.js server and Admin SDK exclusively. Private
+    // access-token digests must never be readable by browser clients.
+    match /{document=**} {
+      allow read, write: if false;
     }
   }
 }

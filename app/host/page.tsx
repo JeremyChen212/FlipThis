@@ -5,16 +5,17 @@ import { BATTLE_NAME, BPM, KEY_LABEL, PHASES, PHASE_LABELS, PHASE_MINUTES, SLOTS
 import { sampleBars, normalizeBeat } from '@/lib/beat';
 import { automaticPairs, botComments, botFlip, botPlayer, botVotes, joinedSlots, playerName, standings, tagOverlap } from '@/lib/game';
 import { createVoting, eligibleSlots, votingBeat } from '@/lib/voting';
-import { clearSession, loadSession } from '@/lib/session';
-import { hasFirebase, useNow, useRoom, type Patch } from '@/lib/store';
+import { clearSession, loadSession, invitePath, type Session } from '@/lib/session';
+import { useNow, useRoom, type Patch } from '@/lib/store';
 import type { RoomState } from '@/lib/types';
 import { Chassis, PhasePills, formatClock } from '@/components/Chassis';
 import { battleSample } from '@/lib/battle';
 import { BeatPlayer } from '@/components/Playback';
+import { LobbyInvite } from '@/components/LobbyInvite';
 import { RoomChat } from '@/components/RoomChat';
 
 const PHASE_HELP: Record<Phase, string> = {
-  lobby: 'Up to 20 players join with their seat codes. Demo room size is adjustable below.',
+  lobby: 'Up to 20 players join with the room invite. Demo room size is adjustable below.',
   taste: 'Everyone drops one song and 2 vibe tags. These tags pick the Flip Back pairs.',
   studio: 'Everyone flips the shared battle sample with their own sample bank and any drum kit.',
   vote: 'Blind A/B votes. Each player judges the matchups that don’t include their own beat.',
@@ -26,7 +27,8 @@ const PHASE_HELP: Record<Phase, string> = {
 
 export default function HostPage() {
   const router = useRouter();
-  const { room, store } = useRoom();
+  const { room, store, mode, error } = useRoom();
+  const [session, setSession] = useState<Session | null>(null);
   const now = useNow();
   const [origin, setOrigin] = useState('');
   const [confirmReset, setConfirmReset] = useState(false);
@@ -34,11 +36,12 @@ export default function HostPage() {
 
   useEffect(() => {
     const s = loadSession();
-    if (!s || s.role !== 'host') router.replace('/');
+    if (!s || s.role !== 'host') { router.replace(`/${window.location.search}`); return; }
+    setSession(s);
     setOrigin(window.location.origin);
   }, [router]);
 
-  if (!room || !store) return <main className="page"><div className="chassis"><div className="panel big-center"><p>Connecting to the room…</p></div></div></main>;
+  if (!session || !room || !store) return <main className="page"><div className="chassis"><div className="panel big-center"><p>{error || 'Connecting to the room…'}</p>{error && <a className="btn btn-ghost" href={session?.roomId ? invitePath(session.roomId, session.transport) : '/'}>Return to lobby / reconnect</a>}</div></div></main>;
 
   const idx = PHASES.indexOf(room.phase);
   const left = room.phaseEndsAt ? room.phaseEndsAt - now : null;
@@ -92,7 +95,7 @@ export default function HostPage() {
         <div className="stack" style={{ gap: 6 }}>
           <span className="hint">Join at</span>
           <strong style={{ fontFamily: 'var(--mono)', fontSize: 15, wordBreak: 'break-all' }}>{origin || '…'}</strong>
-          <span className="hint">{hasFirebase ? 'Live room: works across laptops.' : 'Local mode: only tabs in this browser share the room. Add Firebase keys to go live.'}</span>
+          <span className="hint">{mode === 'online' ? 'Online lobby: share the invite below.' : 'Local practice: only tabs in this browser share the room.'}</span>
         </div>
         <button type="button" className="btn btn-ghost btn-sm" onClick={() => { clearSession(); router.push('/'); }}>Leave host panel</button>
       </>}
@@ -107,6 +110,8 @@ export default function HostPage() {
         <div className="screen-label">{joined.length}/{SLOTS.length} PLAYERS · {PHASE_HELP[room.phase].toUpperCase()}</div>
       </>}
     >
+      {error && <p className="error" role="alert">{error}</p>}
+      <LobbyInvite room={room} transport={session.transport} />
       <section className="panel">
         <div className="panel-head">
           <h2>Run the battle</h2>
@@ -133,7 +138,7 @@ export default function HostPage() {
       <RoomChat key={room.battle?.id || 'legacy'} room={room} store={store} author="host" />
 
       <section className="panel">
-        <div className="panel-head"><h2>Players</h2><span className="hint">Seat codes: PLAYER1–PLAYER20</span></div>
+        <div className="panel-head"><h2>Players</h2><span className="hint">{room.lobby ? 'Seats assigned automatically · 20-player maximum' : 'Classic demo codes: PLAYER1–PLAYER20'}</span></div>
         <div className="scroll-x">
           <table className="status-grid">
             <thead><tr><th>Seat</th><th>Name</th><th>Taste</th><th>Beat</th><th>Votes</th><th>Flip Back</th><th>Team up</th><th><span className="sr-only">Actions</span></th></tr></thead>
@@ -152,7 +157,7 @@ export default function HostPage() {
                     <td>{p ? `${nVotes}/${needVotes}` : '–'}</td>
                     <td>{p?.flip ? <span className={p.flip.done ? 'ok' : ''}>{p.flip.done ? 'Sent' : 'Editing'} · {p.flip.edits} edits</span> : <span className="no">–</span>}</td>
                     <td>{p?.teamUp == null ? <span className="no">–</span> : p.teamUp ? <span className="ok">Yes</span> : 'No'}</td>
-                    <td>{p && <button type="button" className="btn btn-ghost btn-sm" onClick={() => store.update({ [`players.${s.id}`]: null })} aria-label={`Clear seat ${s.code}`}>Clear</button>}</td>
+                    <td>{p && <button type="button" className="btn btn-ghost btn-sm" onClick={() => store.removePlayer ? store.removePlayer(s.id) : store.update({ [`players.${s.id}`]: null })} aria-label={`Clear seat ${s.code}`}>Clear</button>}</td>
                   </tr>
                 );
               })}
@@ -196,7 +201,7 @@ export default function HostPage() {
         <div className="dialog-back" role="dialog" aria-modal="true" aria-labelledby="reset-title">
           <div className="dialog">
             <h2 id="reset-title">Start a new battle?</h2>
-            <p className="hint" style={{ margin: 0 }}>This clears the current seats, beats, votes and feedback, rotates the shared sample, and reshuffles unique sound packs. Players stay on their pages and rejoin automatically.</p>
+            <p className="hint" style={{ margin: 0 }}>This clears beats, votes, feedback and chat, rotates the shared sample, and reshuffles unique packs. In named lobbies, player identities and invite links are kept so everyone can play again.</p>
             <div className="row" style={{ justifyContent: 'flex-end' }}>
               <button type="button" className="btn" onClick={() => setConfirmReset(false)}>Cancel</button>
               <button type="button" className="btn btn-dark" onClick={() => { store.reset(); setConfirmReset(false); }}>New battle / reset</button>

@@ -285,7 +285,7 @@ function FlipEditor({ room, store, slot, partner }: PS & { partner: SlotId }) {
   const done = !!(mine && mine.of === partner && mine.done);
   const editsRef = useRef(edits);
   editsRef.current = edits;
-  const [beat, setBeat, replace, cancelSave] = useSyncedBeat(start, (b) => store.update({ [`players.${slot}.flip`]: { of: partner, beat: b, edits: editsRef.current, done: false } }, room.battle?.id));
+  const [beat, setBeat, replace, cancelSave] = useSyncedBeat(start, (b) => store.update({ [`players.${slot}.flip`]: { of: partner, beat: b, edits: editsRef.current, done: false } }, room.battle?.id), done ? undefined : `flipthis.draft.${room.lobby?.code || 'demo'}.${room.battle?.id || 'legacy'}.${slot}.flip.${partner}`);
   const bank = playerBank(room.players[slot], slot, room);
 
   const onChange = (b: Beat) => { setEdits(edits + 1); editsRef.current = edits + 1; setBeat(b); };

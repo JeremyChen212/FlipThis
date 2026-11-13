@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { BATTLE_NAME, BPM, KEY_LABEL, PHASE_LABELS, SLOT_BY_ID, type SlotId } from '@/lib/config';
 import { normalizeBeat, sampleBars, canSubmit as beatReady } from '@/lib/beat';
 import { joinedSlots, playerName } from '@/lib/game';
-import { loadSession, saveSession, clearSession, type Session } from '@/lib/session';
+import { loadSession, saveSession, clearSession, invitePath, type Session } from '@/lib/session';
 import { playerBank, randomBank } from '@/lib/packs';
 import { useNow, useRoom } from '@/lib/store';
 import type { RoomState } from '@/lib/types';
@@ -21,12 +21,12 @@ import { RoomChat } from '@/components/RoomChat';
 export default function PlayPage() {
   const router = useRouter();
   const [session, setSession] = useState<Session | null>(null);
-  const { room, store } = useRoom();
+  const { room, store, error } = useRoom();
   const now = useNow();
 
   useEffect(() => {
     const s = loadSession();
-    if (!s || s.role !== 'player' || !s.slot) { router.replace('/'); return; }
+    if (!s || s.role !== 'player' || !s.slot) { router.replace(`/${window.location.search}`); return; }
     if (!s.bank) { s.bank = randomBank(); saveSession(s); }
     setSession(s);
   }, [router]);
@@ -35,12 +35,13 @@ export default function PlayPage() {
   useEffect(() => {
     if (!room || !store || !session?.slot) return;
     const me = room.players[session.slot];
+    if (!me && session.roomId) return;
     if (!me) store.update({ [`players.${session.slot}`]: { name: session.name, joinedAt: Date.now(), bank: room.battle?.packs[session.slot] || session.bank } });
     else if (me.name !== session.name && !me.bot) store.update({ [`players.${session.slot}.name`]: session.name });
   }, [room, store, session]);
 
   if (!session?.slot || !room || !store || !room.players[session.slot]) {
-    return <main className="page"><div className="chassis"><div className="panel big-center"><p>Connecting to the room…</p></div></div></main>;
+    return <main className="page"><div className="chassis"><div className="panel big-center"><p>{error || 'Connecting to the room…'}</p>{error && <a className="btn btn-ghost" href={session?.roomId ? invitePath(session.roomId, session.transport) : '/'}>Return to lobby / reconnect</a>}</div></div></main>;
   }
 
   const slot = session.slot;
@@ -79,6 +80,7 @@ export default function PlayPage() {
         <div className="screen-label">SAMPLE: {battleSample(room).label}</div>
       </>}
     >
+      {error && <p className="error" role="alert">{error} Your work stays on this device while the connection recovers.</p>}
       <PhaseView room={room} store={store} slot={slot} />
       <SubmissionFeedback room={room} slot={slot} />
       <RoomChat key={room.battle?.id || 'legacy'} room={room} store={store} author={slot} />
@@ -102,7 +104,7 @@ function PhaseView({ room, store, slot }: { room: RoomState; store: RoomStore; s
 function MyStudio({ room, store, slot }: { room: RoomState; store: RoomStore; slot: SlotId }) {
   const me = room.players[slot];
   const bank = playerBank(me, slot, room);
-  const [beat, setBeat, , cancelSave] = useSyncedBeat(normalizeBeat(me?.beat), (b) => store.update({ [`players.${slot}.beat`]: b }, room.battle?.id));
+  const [beat, setBeat, , cancelSave] = useSyncedBeat(normalizeBeat(me?.beat), (b) => store.update({ [`players.${slot}.beat`]: b }, room.battle?.id), me?.submitted ? undefined : `flipthis.draft.${room.lobby?.code || 'demo'}.${room.battle?.id || 'legacy'}.${slot}`);
   const submitted = !!me?.submitted;
   const ready = beatReady(beat);
 

@@ -45,6 +45,7 @@ export interface VotingState {
 }
 
 export interface RoomState {
+  lobby?: { code: string; name: string; hostName: string; createdAt: number };
   chat?: Record<string, ChatMessage>;
   chatSequence?: number;
   battle?: BattleSetup;

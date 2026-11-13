@@ -2,18 +2,13 @@
 
 A 3–20-player beat battle prototype for COGS 123. Everyone flips the same rotating battle sample with a unique compatible sound pack, votes blind, then remixes another player's beat (Flip Back) and decides whether to form a crew.
 
-**Stack:** Next.js 15 (App Router, TypeScript) · Tone.js for audio · Firebase Firestore for the shared room · hosted on Vercel.
+**Stack:** Next.js 15 (App Router, TypeScript) · Tone.js for audio · server-authorized Firestore lobbies online · browser storage for local practice. Deployment preparation: [DEPLOYMENT.md](DEPLOYMENT.md).
 
 ## How a session runs
 
-| Who | Code | What they see |
-|---|---|---|
-| Player 1 | `PLAYER1` | Enters their own name; receives a random sound pack |
-| Player 2 | `PLAYER2` | Enters their own name; receives a random sound pack |
-| Player 3 | `PLAYER3` | Enters their own name; receives a random sound pack |
-| Player 4 | `PLAYER4` | Enters their own name; receives a random sound pack |
-| Players 5–20 | `PLAYER5`–`PLAYER20` | Same flow, up to 20 total seats |
-| Facilitator | `HOST` | Host panel: moves everyone through the phases |
+Choose **Create a lobby**, enter a lobby name and your name, and share the six-character room code or invite link. Classmates choose **Join a lobby**, enter their names, and receive free seats automatically (up to twenty). Your browser saves private host/player access so refreshes and returning visits keep your spot and work. Only the host can control phases, reset the battle, fill demo seats, or remove players.
+
+Without online credentials, the same lobby flow runs as local practice between tabs in this browser. The **Classic single-device demo** section preserves HOST and PLAYER1–PLAYER20 seat codes. For online account setup and deployment, follow [DEPLOYMENT.md](DEPLOYMENT.md).
 
 There are **20 distinct complementary packs**: the original Cloud, Keys, Strings, and Synth banks plus 16 synthesized packs. Every pack contains chords, melody, bass, and FX. All fit the shared 130 BPM / B minor progression. Each new battle shuffles the packs across all twenty seats without replacement, so personal loop files are never shared between players in that battle. Returning seats also receive a different pack from the preceding battle. Assignment is saved in the room; refreshing or rejoining keeps the same pack and beat. Legacy seat codes remain aliases; existing battles retain their original sounds until you start a new battle.
 
@@ -44,24 +39,11 @@ npm test           # packs, matching, drum assets, previews, API fallback, local
 npm run typecheck
 ```
 
-Without Firebase keys the app runs in **local mode**: tabs in the same browser share one room. Open one tab with `HOST` and 3–20 tabs with separate player codes to rehearse the whole flow on one laptop.
+Without the three server-only Firebase credentials, named lobbies run in **local practice mode**. Open the host invite in additional tabs in the same browser. Existing classic demo rooms remain unchanged.
 
-## Go live across laptops (Firebase, free)
+## Go online without enabling billing
 
-1. Go to https://console.firebase.google.com → **Add project** (Analytics off is fine).
-2. **Build → Firestore Database → Create database** → production mode → any region.
-3. In **Rules**, paste the contents of `firestore.rules` and **Publish**.
-4. **Project settings → General → Your apps → Web (`</>`)** → register an app. Copy `apiKey`, `authDomain`, `projectId`, `appId`.
-5. Copy `.env.example` to `.env.local` and fill in those four values.
-
-## Deploy on Vercel (free)
-
-1. Push this folder to GitHub (e.g. `JeremyChen212/FlipThis`).
-2. Go to https://vercel.com/new → import the repo → Framework: Next.js (auto-detected).
-3. Under **Environment Variables**, add the four `NEXT_PUBLIC_FIREBASE_*` values (and optionally `NEXT_PUBLIC_SURVEY_URL`).
-4. **Deploy**. Share the `*.vercel.app` link; players enter their seat code.
-
-Optional settings: `NEXT_PUBLIC_ROOM_ID` (use a new value to start a fresh room), `NEXT_PUBLIC_HOST_CODE`, `NEXT_PUBLIC_SURVEY_URL` (shown on the final screen).
+Use a Firebase **Spark** project and a personal Vercel **Hobby** account. Online mutations go through the Next.js API; browser Firestore access is denied. Follow [DEPLOYMENT.md](DEPLOYMENT.md) for account creation, private credential setup, real Firebase verification, Git-based deployment and a cross-device rehearsal. No online deployment has been configured by the code itself.
 
 ## Swapping in your own loops
 
@@ -93,10 +75,14 @@ Voting freezes submitted beats that meet the shared-sample requirement. At least
 
 Each cyclic round gives every beat one A-side and one B-side appearance, excludes self-voting, and avoids repeat matchups for a voter. Offset selection spreads opponents and listeners. At 20 submissions, each beat faces twelve different opponents. Rankings use win percentage among completed assigned votes, with shared ranks for ties; the UI shows completed versus assigned reviews so incomplete voting is visible. This is a short-session sample of preferences, not an exhaustive tournament. The host leaderboard stays hidden during blind voting.
 
-Voters can write an optional, kind, specific note under either beat (280 characters). Notes save alongside the A/B choice, including feedback for the beat that was not selected. Reviewing a beat again lets a voter update their single note to that creator. Creators see the reviewer’s name and note only from Reveal onward in the “What people heard in your beat” panel, which stays available through Crews. As with the existing prototype, blind identities and feedback visibility are enforced by the interface; the shared room document is readable by clients.
+Voters can write an optional, kind, specific note under either beat (280 characters). Notes save alongside the A/B choice, including feedback for the beat that was not selected. Reviewing a beat again lets a voter update their single note to that creator. Creators see the reviewer’s name and note only from Reveal onward in the “What people heard in your beat” panel, which stays available through Crews. As with the existing prototype, blind identities and feedback visibility are enforced by the interface; room snapshots are readable only by authenticated room members; blind comparison labels are still a presentation convention.
 
 ## Room chat
 
 The global room chat is available to players and the facilitator in the Lobby and from Reveal through Crews. It pauses during Taste Drop, creation, and blind voting. The same conversation resumes after voting, with author names, phase labels, conversation-starter prompts, Enter-to-send, and Shift+Enter for line breaks. Reading older messages does not force a jump to the latest message.
 
-Messages persist across refreshes in the current room, and **New battle / reset** clears them. Each message is limited to 400 characters; the latest 150 are kept. Bots do not send chat messages. Local writes use Web Locks in supporting browsers to serialize chat and beat updates; connected Firestore messages use transactions. Sends check the latest phase and battle ID so a delayed message cannot leak into a later battle. Local mode still shares chat only among tabs in the same browser/origin. As with the rest of the prototype, names/roles and phase visibility are enforced by app conventions, not authentication rules.
+Messages persist across refreshes in the current room, and **New battle / reset** clears them. Each message is limited to 400 characters; the latest 150 are kept. Bots do not send chat messages. Local writes use Web Locks in supporting browsers to serialize chat and beat updates; online Firestore mutations use server transactions. Sends check the latest phase and battle ID so a delayed message cannot leak into a later battle. Local mode still shares chat only among tabs in the same browser/origin. Online role and phase permissions are enforced by the server; private access-token digests never enter room snapshots. Classic demo mode remains a trusted single-device rehearsal.
+
+## Verification
+
+`npm test` covers existing game/audio behavior plus the real HTTP lobby handlers using an isolated repository. `npm run test:browser` exercises fresh browser profiles; `npm run test:firebase` is an explicit credentialed cloud check. See [DEPLOYMENT.md](DEPLOYMENT.md) for what each verifies.
